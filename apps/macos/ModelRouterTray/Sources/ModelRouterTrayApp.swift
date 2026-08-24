@@ -1975,37 +1975,6 @@ final class RouterStore: ObservableObject {
     }
   }
 
-  func setChatGPTAccountPoolEnabled(_ enabled: Bool) async {
-    providerOperation = "chatgpt-account-pool"
-    defer { providerOperation = nil }
-    do {
-      _ = try await runControl(arguments: [
-        "chatgpt-account-pool", enabled ? "enable" : "disable"
-      ])
-      await refresh()
-      message = enabled
-        ? routerLocalized("ChatGPT account pool enabled.")
-        : routerLocalized("ChatGPT account pool disabled.")
-    } catch {
-      message = error.localizedDescription
-    }
-  }
-
-  func setChatGPTAccountPoolMode(_ mode: String) async {
-    guard mode == "switch" || mode == "pool" else { return }
-    providerOperation = "chatgpt-account-pool"
-    defer { providerOperation = nil }
-    do {
-      _ = try await runControl(arguments: ["chatgpt-account-pool", "mode", mode])
-      await refresh()
-      message = mode == "pool"
-        ? routerLocalized("ChatGPT account pool mode enabled.")
-        : routerLocalized("ChatGPT account switch mode enabled.")
-    } catch {
-      message = error.localizedDescription
-    }
-  }
-
   func setChatGPTAccountSelection(_ selection: String) async {
     providerOperation = "chatgpt-account-pool"
     defer { providerOperation = nil }
@@ -3872,7 +3841,6 @@ struct RouterAccountPoolSnapshot: Decodable {
 struct RouterAccountPoolPolicy: Decodable {
   let enabled: Bool
   let mode: String?
-  let strategy: String
   let selectedAccountId: String?
 }
 
@@ -6148,7 +6116,8 @@ private struct TrayView: View {
     private var accountPool: RouterAccountPoolSnapshot? { store.snapshot.catalog?.accountPool }
 
     var body: some View {
-      AccordionPanel(
+      let selectedAccountID = accountPool?.profile?.desired ?? accountPool?.profile?.active
+      return AccordionPanel(
         title: routerLocalized("Provider pools"),
         summary: pools.isEmpty
           ? routerLocalized("No API-key pool configured")
@@ -6161,47 +6130,42 @@ private struct TrayView: View {
             .foregroundStyle(routerMuted)
             .fixedSize(horizontal: false, vertical: true)
           if let accountPool {
-            HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 7) {
               VStack(alignment: .leading, spacing: 2) {
-                Text(routerLocalized("ChatGPT account pool"))
+                Text(routerLocalized("ChatGPT accounts"))
                   .font(.system(size: 11, weight: .medium))
                 Text(accountPool.accounts.isEmpty
-                  ? routerLocalized("No pooled accounts registered")
-                  : routerFormat("%d accounts · %@", accountPool.accounts.count, accountPool.policy.strategy))
+                  ? routerLocalized("No saved accounts")
+                  : routerFormat("%d saved accounts", accountPool.accounts.count))
                   .font(.system(size: 9))
                   .foregroundStyle(routerMuted)
               }
-              Spacer()
-              Picker("", selection: Binding(
-                get: { accountPool.policy.mode == "pool" ? "pool" : "switch" },
-                set: { mode in Task { await store.setChatGPTAccountPoolMode(mode) } }
-              )) {
-                Text(routerLocalized("Switch")).tag("switch")
-                Text(routerLocalized("Pool")).tag("pool")
-              }
-              .pickerStyle(.menu)
-              .labelsHidden()
-              .frame(width: 86)
-              .disabled(store.providerOperation != nil)
-              Picker("", selection: Binding(
-                get: {
-                  accountPool.policy.enabled
-                    ? accountPool.policy.selectedAccountId ?? "auto"
-                    : accountPool.profile?.active ?? accountPool.accounts.keys.sorted().first ?? "auto"
-                },
-                set: { selection in Task { await store.setChatGPTAccountSelection(selection) } }
-              )) {
-                Text(routerLocalized("Automatic")).tag("auto")
-                ForEach(accountPool.accounts.keys.sorted(), id: \.self) { accountId in
-                  if let account = accountPool.accounts[accountId], account.subscription?.usable == true {
-                    Text(account.subscription?.email ?? account.label ?? accountId).tag(accountId)
+              ForEach(accountPool.accounts.keys.sorted(), id: \.self) { accountId in
+                if let account = accountPool.accounts[accountId], account.subscription?.usable == true {
+                  let selected = selectedAccountID == accountId
+                  Button {
+                    Task { await store.setChatGPTAccountSelection(accountId) }
+                  } label: {
+                    HStack(spacing: 6) {
+                      Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(selected ? routerMint : routerMuted)
+                      Text(account.subscription?.email ?? account.label ?? routerLocalized("ChatGPT account"))
+                        .font(.system(size: 9))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                      Spacer()
+                      if accountPool.profile?.pending == true && selected {
+                        Text(routerLocalized("Restart Codex"))
+                          .font(.system(size: 8))
+                          .foregroundStyle(routerMuted)
+                      }
+                    }
                   }
+                  .buttonStyle(.plain)
+                  .disabled(selected || store.providerOperation != nil)
                 }
               }
-              .pickerStyle(.menu)
-              .labelsHidden()
-              .frame(width: 170)
-              .disabled(store.providerOperation != nil)
             }
           }
           if pools.isEmpty {
